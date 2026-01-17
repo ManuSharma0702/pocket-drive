@@ -8,22 +8,43 @@ impl EventParser {
         Self
     }
 
-    fn parse(&self){
-        unimplemented!()
+    pub fn parse(&self, input: Vec<DebouncedEvent>){
+        println!("{:?}", input);
+        unimplemented!();
         //send to listener which will send to API handler
     }
 }
 
-struct EventListener {
+pub struct EventListener {
     parser: EventParser,
     receiver: Receiver<Vec<DebouncedEvent>>,
     sender: Sender<Vec<DebouncedEvent>>
 }
 
 impl EventListener {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let (tx_parser, rx_parser) = mpsc::channel(1024);
-        let parser = EventParser::new();
-        EventListener { parser, receiver: rx_parser, sender: tx_parser }
+        Self {
+            parser: EventParser::new(),
+            receiver: rx_parser,
+            sender: tx_parser
+        }
+    }
+
+    pub fn sender(&self) -> Sender<Vec<DebouncedEvent>> {
+        self.sender.clone()
+    }
+
+    pub async fn run(mut self) {
+        while let Some(batch) = self.receiver.recv().await {
+            self.parser.parse(batch);
+        }
+    }
+
+}
+
+impl Default for EventListener {
+    fn default() -> Self {
+        Self::new()
     }
 }
