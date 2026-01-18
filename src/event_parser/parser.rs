@@ -10,8 +10,6 @@ impl EventParser {
 
     pub fn parse(&self, input: Vec<DebouncedEvent>){
         println!("{:?}", input);
-        unimplemented!();
-        //send to listener which will send to API handler
     }
 }
 

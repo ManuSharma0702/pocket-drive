@@ -1,3 +1,5 @@
+use std::env;
+
 use pocket_drive::{event_parser::parser::EventListener, file_watcher::watcher::NotifyHandler};
 
 #[tokio::main]
@@ -6,7 +8,13 @@ async fn main() {
     let listener = EventListener::new();
     let sender = listener.sender();
 
-    watcher.watch(".").unwrap();
+    let args: Vec<String> = env::args().collect();
+    let path = &args[1];
+
+    //Create local hash of directory files, take path of the file to hash 
+
+
+    watcher.watch(path).unwrap();
 
     tokio::spawn(listener.run());
 

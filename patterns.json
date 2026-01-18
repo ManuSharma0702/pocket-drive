@@ -1,0 +1,128 @@
+create: [
+  DebouncedEvent{
+    event: Event{
+      kind: Create(Any),
+      paths: [
+        "C:\\Use rs\\USER\\rustProj\\pocket-drive\\.\\new_file.txt"
+      ],
+      attr: tracker: None,
+      attr: flag: None,
+      attr: info: None,
+      attr: source: None
+    },
+    time: Instant{
+      t: 37093.9137725s
+    }
+  }
+],
+delete: [
+  DebouncedEvent{
+    event: Event{
+      kind: Remove(Any),
+      paths: [
+        "C:\\Use rs\\USER\\rustProj\\pocket-drive\\.\\new_file.txt"
+      ],
+      attr: tracker: None,
+      attr: flag: None,
+      attr: info: None,
+      attr: source: None
+    },
+    time: Instant{
+      t: 37118.1527309s
+    }
+  }
+],
+update: [
+  DebouncedEvent{
+    event: Event{
+      kind: Modify(Name(From)),
+      paths: [
+        " C:\\Users\\USER\\rustProj\\pocket-drive\\.\\dsasdad.txt"
+      ],
+      attr: tracker: None,
+      attr: flag: None,
+      attr: info: None,
+      attr: source: None
+    },
+    time: Instant{
+      t: 37208.0582534s
+    }
+  },
+  DebouncedEvent{
+    event: Event{
+      kind: Create(Any),
+      paths: [
+        "C:\\Users\\USER\\rustProj\\pocket-drive \\.\\dsasdad.txt"
+      ],
+      attr: tracker: None,
+      attr: flag: None,
+      attr: info: None,
+      attr: source: None
+    },
+    time: Instant{
+      t: 37208.0595777s
+    }
+  },
+  DebouncedEvent{
+    event: Event{
+      kind: Modify(Any),
+      paths: [
+        "C:\\Users\ \USER\\rustProj\\pocket-drive\\.\\dsasdad.txt"
+      ],
+      attr: tracker: None,
+      attr: flag: None,
+      attr: info: None,
+      attr: source: None
+    },
+    time: Instant{
+      t: 37208.0595946s
+    }
+  }
+],
+rename: [
+  DebouncedEvent{
+    event: Event{
+      kind: Create(Any),
+      paths: [
+        "C:\\Use rs\\USER\\rustProj\\pocket-drive\\.\\dsa3312312.txt"
+      ],
+      attr: tracker: None,
+      attr: flag: None,
+      attr: info: None,
+      attr: source: None
+    },
+    time: Instant{
+      t: 37238.2095293s
+    }
+  },
+  DebouncedEvent{
+    event: Event{
+      kind: Modify(Any),
+      paths: [
+        "C:\\Users\\USER\\rustProj\\pocket-drive\\.\ \dsa3312312.txt"
+      ],
+      attr: tracker: None,
+      attr: flag: None,
+      attr: info: None,
+      attr: source: None
+    },
+    time: Instant{
+      t: 37238.2095459s
+    }
+  },
+  DebouncedEvent{
+    event: Event{
+      kind: Remove(Any),
+      paths: [
+        "C:\\Users\\ USER\\rustProj\\pocket-drive\\.\\dsa3312312.txt~"
+      ],
+      attr: tracker: None,
+      attr: flag: None,
+      attr: info: None,
+      attr: source: None
+    },
+    time: Instant{
+      t: 37238.2100532s
+    }
+  }
+]
