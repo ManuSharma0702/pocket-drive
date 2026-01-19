@@ -1,6 +1,6 @@
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
-use tokio::sync::mpsc::Sender;
+use std::sync::mpsc::Sender;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::path::PathBuf;
@@ -70,7 +70,8 @@ impl Hasher {
 
         pb.finish_with_message("done");
 
-        self.tx_db.send(DbCmd::BulkInsert(results)).await.unwrap();
+        dbg!("Sending");
+        self.tx_db.send(DbCmd::BulkInsert(results)).unwrap();
     }
 
 

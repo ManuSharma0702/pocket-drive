@@ -1,7 +1,7 @@
 use std::{path::PathBuf, time::SystemTime};
 
 use sqlite::{Connection, State};
-use tokio::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 #[derive(Debug)]
 pub struct FileEntry {
@@ -27,8 +27,8 @@ pub struct Db{
 
 impl Db{
     pub fn new() -> Self {
-        let (tx, rx) = channel(1024);
-        let connection = sqlite::open(":memory:").unwrap();
+        let (tx, rx) = channel();
+        let connection = sqlite::open("memory").unwrap();
         let query = "
             CREATE TABLE IF NOT EXISTS filehash (filepath TEXT, filehash TEXT, size BIGDECIMAL, modified DATETIME);
         ";
@@ -44,13 +44,13 @@ impl Db{
         self.tx.clone()
     }
 
-    pub async fn run(mut self) {
-        while let Some(batch) = self.rx.recv().await {
-            self.execute(batch).await.unwrap();
+    pub fn run(&self) {
+        while let Ok(cmd) = self.rx.recv() {
+            self.execute(cmd).unwrap();
         }
     }
 
-    async fn execute(&self, cmd: DbCmd) -> sqlite::Result<Option<FileEntry>>{
+    fn execute(&self, cmd: DbCmd) -> sqlite::Result<Option<FileEntry>>{
         match cmd {
             DbCmd::Get(path) => {
                 let mut stmt = self.conn.prepare(
@@ -134,6 +134,7 @@ impl Db{
                 }
 
                 self.conn.execute("COMMIT")?;
+                dbg!("INSERTED SUCCESSFULLY");
 
                 Ok(None)
             }

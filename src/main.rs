@@ -1,7 +1,6 @@
 use std::env ;
 
 use pocket_drive::{db_listener::db::Db, event_parser::parser::EventListener, file_hasher::hasher::Hasher, file_watcher::watcher::NotifyHandler};
-use tokio::task::LocalSet;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -20,8 +19,9 @@ async fn main() {
 
     tokio::spawn(listener.run());
 
-    let local = LocalSet::new();
-    local.spawn_local(db.run());
+    std::thread::spawn(move || {
+        db.run();
+    });
 
     hasher.initialise(path).await;
 
