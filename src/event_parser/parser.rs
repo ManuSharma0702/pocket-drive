@@ -9,6 +9,7 @@ impl EventParser {
     }
 
     pub fn parse(&self, input: Vec<DebouncedEvent>){
+        //Call the hasher for generating what action to do on the server
         println!("{:?}", input);
     }
 }

@@ -1,22 +1,26 @@
 use std::env;
 
-use pocket_drive::{event_parser::parser::EventListener, file_watcher::watcher::NotifyHandler};
+use pocket_drive::{db_listener::db::Db, event_parser::parser::EventListener, file_watcher::watcher::NotifyHandler};
+use tokio::task::LocalSet;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     let mut watcher = NotifyHandler::new(); 
     let listener = EventListener::new();
+    let db = Db::new();
     let sender = listener.sender();
 
     let args: Vec<String> = env::args().collect();
     let path = &args[1];
 
-    //Create local hash of directory files, take path of the file to hash 
-
 
     watcher.watch(path).unwrap();
 
     tokio::spawn(listener.run());
+
+
+    let local = LocalSet::new();
+    local.spawn_local(db.run());
 
     if let Some(mut rx) = watcher.receiver.take() {
         tokio::spawn(async move {
@@ -40,3 +44,4 @@ async fn main() {
     println!("Watching...");
     tokio::signal::ctrl_c().await.unwrap();
 }
+
