@@ -3,16 +3,18 @@ use std::{path::PathBuf, time::SystemTime};
 use sqlite::{Connection, State};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 
+#[derive(Debug)]
 pub struct FileEntry {
-    path: PathBuf,
-    hash: String,
-    size: u64,
-    modified: SystemTime,
+    pub path: PathBuf,
+    pub hash: String,
+    pub size: u64,
+    pub modified: SystemTime,
 }
 
 pub enum DbCmd{
     Get(PathBuf),
     Insert(FileEntry),
+    BulkInsert(Vec<FileEntry>),
     Delete(PathBuf),
     Update(FileEntry)
 }
@@ -28,7 +30,7 @@ impl Db{
         let (tx, rx) = channel(1024);
         let connection = sqlite::open(":memory:").unwrap();
         let query = "
-            CREATE TABLE filehash (filepath TEXT, filehash TEXT, size: BIGDECIMAL, modified: DATETIME);
+            CREATE TABLE IF NOT EXISTS filehash (filepath TEXT, filehash TEXT, size BIGDECIMAL, modified DATETIME);
         ";
         connection.execute(query).unwrap();
         Db{
@@ -101,10 +103,37 @@ impl Db{
 
                 stmt.bind((1, file.hash.as_str()))?;
                 stmt.bind((2, file.size as i64))?;
-                stmt.bind((2, file.modified.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64))?;
+                stmt.bind((3, file.modified.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64))?;
                 stmt.bind((4, file.path.to_str()))?;
 
                 stmt.next()?;
+
+                Ok(None)
+            }
+            
+            DbCmd::BulkInsert(files) => {
+                self.conn.execute("BEGIN TRANSACTION")?;
+                let mut stmt = self.conn.prepare(
+                    "INSERT OR REPLACE INTO filehash (filepath, filehash, size, modified) VALUES (?, ?, ?, ?)"
+                )?;
+
+                for file in files {
+                    stmt.bind((1, file.path.to_str().unwrap()))?;
+                    stmt.bind((2, file.hash.as_str()))?;
+                    stmt.bind((3, file.size as i64))?;
+                    stmt.bind((
+                        4,
+                        file.modified
+                            .duration_since(SystemTime::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs() as i64,
+                    ))?;
+
+                    stmt.next()?;
+                    stmt.reset()?;
+                }
+
+                self.conn.execute("COMMIT")?;
 
                 Ok(None)
             }
