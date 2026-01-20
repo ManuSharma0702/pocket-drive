@@ -37,9 +37,6 @@ impl NotifyHandler {
     }
 }
 
-
-
-
 impl Default for NotifyHandler {
     fn default() -> Self {
         Self::new()

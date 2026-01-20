@@ -144,6 +144,7 @@ impl Db{
                 Ok(None)
             }
 
+            //Walk the entire directory and compare the metadata of file with the metadata in DB;; //3 case: //Diff -> update hash and metadata update the db entry //Missing -> insert //Present, same hash -> ignore //Present in DB, not in directory -> Remove //Get the entire db in memory in Bulk, as a hashMap of <Path, FileEntry> //Create the HashMap of directory files as <Path, FileEntry> //Make comparisons and store in a separate map with <DbCmd, Vec<FileEntry>> //Execute each command over the vector in batch //Send the same command over to the Server for sync
             DbCmd::ProcessEvents(events) => {
                 Ok(None)
             }
