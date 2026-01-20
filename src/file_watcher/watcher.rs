@@ -17,6 +17,7 @@ impl NotifyHandler {
             None,
             move |result| {
                 let tx = tx.clone();
+                dbg!(&result);
                 let _ = tx.blocking_send(result);
             },
         );

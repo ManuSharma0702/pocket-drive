@@ -1,13 +1,13 @@
 use std::env ;
 
-use pocket_drive::{db_listener::db::Db, event_parser::parser::EventListener, file_hasher::hasher::Hasher, file_watcher::watcher::NotifyHandler};
+use pocket_drive::{db_listener::db::Db, event_listener::listener::EventListener, file_hasher::hasher::Hasher, file_watcher::watcher::NotifyHandler};
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() {
     let mut watcher = NotifyHandler::new(); 
-    let listener = EventListener::new();
     let db = Db::new();
 
+    let listener = EventListener::new(db.get_sender());
     let sender = listener.sender();
 
     let hasher = Hasher::new(db.get_sender());
@@ -23,7 +23,7 @@ async fn main() {
         db.run();
     });
 
-    hasher.initialise(path).await;
+    hasher.initialise(path);
 
     if let Some(mut rx) = watcher.receiver.take() {
         tokio::spawn(async move {

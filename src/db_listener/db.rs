@@ -1,5 +1,6 @@
 use std::{path::PathBuf, time::SystemTime};
 
+use notify_debouncer_full::DebouncedEvent;
 use sqlite::{Connection, State};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
@@ -12,7 +13,8 @@ pub struct FileEntry {
 }
 
 pub enum DbCmd{
-    Get(PathBuf),
+    ProcessEvents(Vec<DebouncedEvent>),
+    Get(PathBuf, Sender<Option<FileEntry>>),
     Insert(FileEntry),
     BulkInsert(Vec<FileEntry>),
     Delete(PathBuf),
@@ -52,7 +54,7 @@ impl Db{
 
     fn execute(&self, cmd: DbCmd) -> sqlite::Result<Option<FileEntry>>{
         match cmd {
-            DbCmd::Get(path) => {
+            DbCmd::Get(path, sender) => {
                 let mut stmt = self.conn.prepare(
                     "Select * from filehash where filepath = ?"
                 )?;
@@ -63,20 +65,19 @@ impl Db{
                     let size: i64 = stmt.read(2)?;
                     let modified: i64 = stmt.read(3)?;
 
-                    return Ok(
-                        Some(FileEntry{
-                            path: PathBuf::from(path),
-                            hash,
-                            size: size as u64,
-                            modified: SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(modified as u64)
-                        })
-                    );
+                    sender.send(Some(FileEntry{
+                        path: PathBuf::from(path),
+                        hash,
+                        size: size as u64,
+                        modified: SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(modified as u64)
+                    })).unwrap();
                 };
+                sender.send(None).unwrap();
                 Ok(None)
             }
             DbCmd::Insert(file) => {
                 let mut stmt = self.conn.prepare(
-                    "Insert INTO filehash VALUE (?,?,?,?)"
+                    "Insert INTO filehash VALUES (?,?,?,?)"
                 )?;
                 stmt.bind((1, file.path.to_str()))?;
                 stmt.bind((2, file.hash.as_str()))?;
@@ -89,7 +90,7 @@ impl Db{
 
             DbCmd::Delete(path) => {
                 let mut stmt = self.conn.prepare(
-                    "DELETE FROM filehasNh where filepath = ?"
+                    "DELETE FROM filehash where filepath = ?"
                 )?;
                 stmt.bind((1, path.to_str()))?;
                 stmt.next()?;
@@ -98,14 +99,18 @@ impl Db{
             
             DbCmd::Update(file) => {
                 let mut stmt = self.conn.prepare(
-                    "UPDATE filehash SET filehash = ?, size = ?, modified = ? WHERE filepath = ?"
+                    "INSERT INTO filehash (filepath, filehash, size, modified)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(filepath) DO UPDATE SET
+                         filehash = excluded.filehash,
+                         size = excluded.size,
+                         modified = excluded.modified"
                 )?;
 
-                stmt.bind((1, file.hash.as_str()))?;
-                stmt.bind((2, file.size as i64))?;
-                stmt.bind((3, file.modified.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64))?;
-                stmt.bind((4, file.path.to_str()))?;
-
+                stmt.bind((1, file.path.to_str().unwrap()))?;
+                stmt.bind((2, file.hash.as_str()))?;
+                stmt.bind((3, file.size as i64))?;
+                stmt.bind((4, file.modified.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64))?;
                 stmt.next()?;
 
                 Ok(None)
@@ -136,6 +141,10 @@ impl Db{
                 self.conn.execute("COMMIT")?;
                 dbg!("INSERTED SUCCESSFULLY");
 
+                Ok(None)
+            }
+
+            DbCmd::ProcessEvents(events) => {
                 Ok(None)
             }
         }

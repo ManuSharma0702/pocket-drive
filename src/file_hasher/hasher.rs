@@ -1,6 +1,7 @@
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
-use std::sync::mpsc::Sender;
+use std::io;
+use std::sync::mpsc::{self, Sender};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::path::PathBuf;
@@ -23,8 +24,9 @@ impl Hasher {
             tx_db
         }
     }
+
     //Generate the hash and store in sqlite db
-    pub async fn initialise(&self, directory: &str) {
+    pub fn initialise(&self, directory: &str) {
         let walkdir = WalkDir::new(directory);
         let mut paths: Vec<PathBuf> = Vec::new();
 
@@ -74,8 +76,6 @@ impl Hasher {
         self.tx_db.send(DbCmd::BulkInsert(results)).unwrap();
     }
 
-
-
     fn generate_hash(&self, path: &str) -> String {
         let path = PathBuf::from(path);
         let mut hash = Blake2s256::new();
@@ -86,7 +86,19 @@ impl Hasher {
         hash1.eq(hash2)
     }
 
-    fn fetch_hash_from_db(path: &str){ 
+    fn fetch_file_from_db(&self, path: &str) -> Result<FileEntry, io::Error>{ 
+        let (tx, rx) = mpsc::channel();
+
+        let path = PathBuf::from(path);
+        self.tx_db.send(
+            DbCmd::Get(path, tx)
+        ).unwrap();
+
+        match rx.recv() {
+            Ok(Some(file)) => Ok(file),
+            Ok(None) => Err(io::Error::new(io::ErrorKind::NotFound, "file not found in db")),
+            Err(_) => Err(io::Error::new(io::ErrorKind::BrokenPipe, "DB thread disconnected")),
+        }
     }
 }
 
