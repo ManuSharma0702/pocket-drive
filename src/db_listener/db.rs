@@ -1,13 +1,14 @@
-use std::{path::PathBuf, time::SystemTime};
+use std::{collections::HashMap, env, path::PathBuf, time::{Duration, SystemTime}};
 
 use notify_debouncer_full::DebouncedEvent;
 use sqlite::{Connection, State};
+use walkdir::WalkDir;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 #[derive(Debug)]
 pub struct FileEntry {
     pub path: PathBuf,
-    pub hash: String,
+    pub hash: Option<String>,
     pub size: u64,
     pub modified: SystemTime,
 }
@@ -67,7 +68,7 @@ impl Db{
 
                     sender.send(Some(FileEntry{
                         path: PathBuf::from(path),
-                        hash,
+                        hash: Some(hash),
                         size: size as u64,
                         modified: SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(modified as u64)
                     })).unwrap();
@@ -80,7 +81,7 @@ impl Db{
                     "Insert INTO filehash VALUES (?,?,?,?)"
                 )?;
                 stmt.bind((1, file.path.to_str()))?;
-                stmt.bind((2, file.hash.as_str()))?;
+                stmt.bind((2, file.hash.unwrap_or("".to_string()).as_str()))?;
                 stmt.bind((3, file.size as i64))?;
                 stmt.bind((4, file.modified.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64))?;
 
@@ -108,7 +109,7 @@ impl Db{
                 )?;
 
                 stmt.bind((1, file.path.to_str().unwrap()))?;
-                stmt.bind((2, file.hash.as_str()))?;
+                stmt.bind((2, file.hash.unwrap_or("".to_string()).as_str()))?;
                 stmt.bind((3, file.size as i64))?;
                 stmt.bind((4, file.modified.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64))?;
                 stmt.next()?;
@@ -124,7 +125,7 @@ impl Db{
 
                 for file in files {
                     stmt.bind((1, file.path.to_str().unwrap()))?;
-                    stmt.bind((2, file.hash.as_str()))?;
+                    stmt.bind((2, file.hash.unwrap_or("".to_string()).as_str()))?;
                     stmt.bind((3, file.size as i64))?;
                     stmt.bind((
                         4,
@@ -146,7 +147,61 @@ impl Db{
 
             //Walk the entire directory and compare the metadata of file with the metadata in DB;; //3 case: //Diff -> update hash and metadata update the db entry //Missing -> insert //Present, same hash -> ignore //Present in DB, not in directory -> Remove //Get the entire db in memory in Bulk, as a hashMap of <Path, FileEntry> //Create the HashMap of directory files as <Path, FileEntry> //Make comparisons and store in a separate map with <DbCmd, Vec<FileEntry>> //Execute each command over the vector in batch //Send the same command over to the Server for sync
             DbCmd::ProcessEvents(events) => {
-                Ok(None)
+                let mut stmt = self.conn.prepare(
+                    "SELECT * FROM filehash"
+                )?;
+
+                let mut db_map: HashMap<PathBuf, FileEntry> = HashMap::new();
+
+                while let Ok(State::Row) = stmt.next() {
+                    let path: String = stmt.read(0)?;
+                    let hash: String = stmt.read(1)?;
+                    let size: i64 = stmt.read(2)?;
+                    let modified: i64 = stmt.read(3)?;
+
+                    let path_buf = PathBuf::from(path);
+
+                    let f = FileEntry {
+                        path: path_buf.clone(),
+                        hash: Some(hash),
+                        size: size as u64,
+                        modified: SystemTime::UNIX_EPOCH + Duration::from_secs(modified as u64),
+                    };
+
+                    db_map.insert(path_buf, f);
+                }
+                let args: Vec<String> = env::args().collect();
+                let path = &args[1];
+                let mut directory_map: HashMap<PathBuf, FileEntry> = HashMap::new();
+
+                for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
+
+                    let metadata = match entry.metadata() {
+                        Ok(m) => m,
+                        Err(_) => continue,
+                    };
+
+                    if !metadata.is_file() {
+                        continue;
+                    }
+
+                    let path = entry.into_path();
+
+                    let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+
+                    let f = FileEntry {
+                        path: path.clone(),
+                        hash: None,
+                        size: metadata.len(),
+                        modified,
+                    };
+
+                    directory_map.insert(path, f);
+                }
+                dbg!(&db_map);
+                dbg!(&directory_map);
+
+                Ok(None)            
             }
         }
 

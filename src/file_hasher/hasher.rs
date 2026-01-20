@@ -63,7 +63,7 @@ impl Hasher {
 
                 FileEntry{
                     path: p,
-                    hash: res,
+                    hash: Some(res),
                     size,
                     modified
                 }
