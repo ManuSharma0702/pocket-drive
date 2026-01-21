@@ -100,5 +100,9 @@ impl Hasher {
             Err(_) => Err(io::Error::new(io::ErrorKind::BrokenPipe, "DB thread disconnected")),
         }
     }
+
+    fn generate_hash_in_bulk(input: Vec<FileEntry>) -> Vec<FileEntry>{
+        unimplemented!();
+    }
 }
 

@@ -5,7 +5,7 @@ use sqlite::{Connection, State};
 use walkdir::WalkDir;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FileEntry {
     pub path: PathBuf,
     pub hash: Option<String>,
@@ -20,6 +20,13 @@ pub enum DbCmd{
     BulkInsert(Vec<FileEntry>),
     Delete(PathBuf),
     Update(FileEntry)
+}
+
+#[derive(Hash, PartialEq, Eq)]
+pub enum ParserCmd {
+    Insert,
+    Delete,
+    Update
 }
 
 pub struct Db{
@@ -198,13 +205,46 @@ impl Db{
 
                     directory_map.insert(path, f);
                 }
-                dbg!(&db_map);
-                dbg!(&directory_map);
+                //3 cases 
+                //Present in Db but not in directory then should be removed
+                //Not present in DB Present in directory, then should be added
+                //Present in both, but metadata is different then update
+                //Present in both, and metadata same, then make no change
+                let mut parser_cmds: HashMap<ParserCmd, FileEntry> = HashMap::new();
+
+                for (path, fi) in &db_map {
+                    if !directory_map.contains_key(path) {
+                        parser_cmds.insert(ParserCmd::Delete, fi.clone());
+                    }
+                }
+
+                for (path, fi) in directory_map {
+                    if db_map.contains_key(&path) {
+                        let file1 = fi;
+                        let file2 = db_map.get(&file1.path).unwrap();
+                        if !self.is_metadata_same(&file1, file2) {
+                            parser_cmds.insert(ParserCmd::Insert, file1);
+                        }
+                    } else {
+                        parser_cmds.insert(ParserCmd::Insert, fi);
+                    }
+                }
 
                 Ok(None)            
             }
         }
 
+    }
+
+    fn is_metadata_same(&self, file1: &FileEntry, file2: &FileEntry) -> bool {
+        let t1 = file1.modified.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+        let t2 = file2.modified.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+
+        file1.size == file2.size && t1 == t2
+    }
+
+    fn execute_parser_cmds(&self, parser_cmd: HashMap<ParserCmd, FileEntry>) {
+        unimplemented!();
     }
 
 }
