@@ -4,26 +4,31 @@ use pocket_drive::{db_listener::db::Db, event_listener::listener::EventListener,
 
 #[tokio::main]
 async fn main() {
-    let mut watcher = NotifyHandler::new(); 
-    let db = Db::new();
-
-    let listener = EventListener::new(db.get_sender());
-    let sender = listener.sender();
-
-    let hasher = Hasher::new(db.get_sender());
 
     let args: Vec<String> = env::args().collect();
     let path = &args[1];
+
+    let mut watcher = NotifyHandler::new(); 
+
+    let hasher = Hasher::new();
+
+    let db = Db::new(hasher.get_sender());
+
+    let listener = EventListener::new(db.get_sender());
+    let sender = listener.sender();
 
     watcher.watch(path).unwrap();
 
     tokio::spawn(listener.run());
 
     std::thread::spawn(move || {
-        db.run();
+        db.run(&args[1].clone());
     });
 
-    hasher.initialise(path);
+    std::thread::spawn(move || {
+        hasher.run();
+    });
+
 
     if let Some(mut rx) = watcher.receiver.take() {
         tokio::spawn(async move {

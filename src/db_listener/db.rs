@@ -1,9 +1,11 @@
-use std::{collections::HashMap, env, path::PathBuf, time::{Duration, SystemTime}};
+use std::{collections::HashMap, env, os::unix::fs::MetadataExt, path::PathBuf, sync::mpsc, time::{Duration, SystemTime}};
 
 use notify_debouncer_full::DebouncedEvent;
 use sqlite::{Connection, State};
 use walkdir::WalkDir;
 use std::sync::mpsc::{Receiver, Sender, channel};
+
+use crate::file_hasher::hasher::HasherCmd;
 
 #[derive(Debug, Clone)]
 pub struct FileEntry {
@@ -32,11 +34,12 @@ pub enum ParserCmd {
 pub struct Db{
     conn: Connection,
     tx: Sender<DbCmd>,
-    rx: Receiver<DbCmd>
+    rx: Receiver<DbCmd>,
+    tx_hasher: Sender<HasherCmd>
 }
 
 impl Db{
-    pub fn new() -> Self {
+    pub fn new(tx_hasher: Sender<HasherCmd>) -> Self {
         let (tx, rx) = channel();
         let connection = sqlite::open("memory").unwrap();
         let query = "
@@ -46,15 +49,49 @@ impl Db{
         Db{
             conn: connection,
             tx,
-            rx
+            rx,
+            tx_hasher
         }
+    }
+
+    pub fn initialise(&self, directory: &str) {
+        let walkdir = WalkDir::new(directory);
+        let mut paths: Vec<FileEntry> = Vec::new();
+
+        for entry in walkdir.into_iter().filter_map(Result::ok) {
+            let metadata = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+
+            if metadata.is_file() {
+                let f = FileEntry {
+                    path: entry.into_path(),
+                    hash: None,
+                    size: metadata.len(),
+                    modified: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                };
+
+                paths.push(f);
+            }
+        }
+        let (tx_db, rx_db) = channel();
+        
+        dbg!("sent to hasher for initialisation of {} files", paths.len());
+
+        self.tx_hasher.send(HasherCmd::Generate(paths.clone(), tx_db)).unwrap();
+        
+        let paths = rx_db.recv().unwrap();
+
+        self.execute(DbCmd::BulkInsert(paths)).unwrap();
     }
 
     pub fn get_sender(&self) -> Sender<DbCmd>{
         self.tx.clone()
     }
 
-    pub fn run(&self) {
+    pub fn run(&self, path: &str) {
+        self.initialise(path);
         while let Ok(cmd) = self.rx.recv() {
             self.execute(cmd).unwrap();
         }
@@ -244,13 +281,20 @@ impl Db{
     }
 
     fn execute_parser_cmds(&self, parser_cmd: HashMap<ParserCmd, FileEntry>) {
-        unimplemented!();
+        //Bulk Insert
+        //Bulk Delete
+        //Bulk Update
+        //
+        //Generate hashes of insert and update files
+        let (tx, rx) = mpsc::channel::<HasherCmd>();
+
+        //
+        // self.tx_hasher.send(
+        //     HasherCmd::Generate(, )
+        // )
+
     }
 
 }
 
-impl Default for Db {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+

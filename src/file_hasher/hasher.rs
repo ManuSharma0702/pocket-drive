@@ -1,41 +1,58 @@
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
-use std::io;
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, Sender, Receiver};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::path::PathBuf;
-use std::time::SystemTime;
 use blake2::{Blake2s256, Digest};
 use file_hashing::get_hash_file;
-use walkdir::WalkDir;
 
-use crate::db_listener::db::{DbCmd, FileEntry};
+use crate::db_listener::db::{FileEntry};
+
+
+pub enum HasherCmd {
+    Generate(Vec<FileEntry>, Sender<Vec<FileEntry>>)
+}
 
 //Hasher will contain the tx for DB
 pub struct Hasher{
-    tx_db: Sender<DbCmd>
+    tx_hasher: Sender<HasherCmd>,
+    rx_hasher: Receiver<HasherCmd>
 }
 
 impl Hasher {
     
-    pub fn new(tx_db: Sender<DbCmd>) -> Self {
+    pub fn new() -> Self {
+        let (tx, rx) = mpsc::channel();
         Self {
-            tx_db
+            tx_hasher: tx,
+            rx_hasher: rx
         }
     }
 
-    //Generate the hash and store in sqlite db
-    pub fn initialise(&self, directory: &str) {
-        let walkdir = WalkDir::new(directory);
-        let mut paths: Vec<PathBuf> = Vec::new();
+    pub fn get_sender(&self) -> Sender<HasherCmd>{
+        self.tx_hasher.clone()
+    }
 
-        for file in walkdir.into_iter().filter_map(|file| file.ok()) {
-            if file.metadata().unwrap().is_file() {
-                paths.push(file.into_path());
+    pub fn run(&self) {
+        while let Ok(cmd) = self.rx_hasher.recv() {
+            self.execute(cmd);
+        }
+    }
+
+    fn execute(&self, cmd: HasherCmd) {
+        match cmd {
+            HasherCmd::Generate(files, sender) => {
+                let hashed_files = self.generate_hash_in_bulk(files);
+                sender.send(hashed_files).unwrap();
             }
         }
 
+    }
+
+    //Generate the hash and store in sqlite db
+    fn generate_hash_in_bulk(&self, paths: Vec<FileEntry>) -> Vec<FileEntry>{
+        dbg!("Generating hashes for {} files", paths.len());
         let total = paths.len() as u64;
 
         let pb = ProgressBar::new(total);
@@ -50,30 +67,20 @@ impl Hasher {
 
         let results: Vec<FileEntry> = paths
             .into_par_iter()
-            .map(|p| {
+            .map(|mut p| {
                 let mut hash = Blake2s256::new();
-                let res = get_hash_file(&p, &mut hash).unwrap();
+                let res = get_hash_file(&p.path, &mut hash).unwrap();
 
                 let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
                 pb.set_position(done as u64);
-                let metadata = std::fs::metadata(&p).unwrap();
-                let size = metadata.len();
-                let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                p.hash = Some(res);
+                p
 
-
-                FileEntry{
-                    path: p,
-                    hash: Some(res),
-                    size,
-                    modified
-                }
             })
             .collect();
 
         pb.finish_with_message("done");
-
-        dbg!("Sending");
-        self.tx_db.send(DbCmd::BulkInsert(results)).unwrap();
+        results
     }
 
     fn generate_hash(&self, path: &str) -> String {
@@ -86,23 +93,10 @@ impl Hasher {
         hash1.eq(hash2)
     }
 
-    fn fetch_file_from_db(&self, path: &str) -> Result<FileEntry, io::Error>{ 
-        let (tx, rx) = mpsc::channel();
-
-        let path = PathBuf::from(path);
-        self.tx_db.send(
-            DbCmd::Get(path, tx)
-        ).unwrap();
-
-        match rx.recv() {
-            Ok(Some(file)) => Ok(file),
-            Ok(None) => Err(io::Error::new(io::ErrorKind::NotFound, "file not found in db")),
-            Err(_) => Err(io::Error::new(io::ErrorKind::BrokenPipe, "DB thread disconnected")),
-        }
-    }
-
-    fn generate_hash_in_bulk(input: Vec<FileEntry>) -> Vec<FileEntry>{
-        unimplemented!();
-    }
 }
 
+impl Default for Hasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
