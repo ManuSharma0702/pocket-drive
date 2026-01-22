@@ -52,7 +52,6 @@ impl Hasher {
 
     //Generate the hash and store in sqlite db
     fn generate_hash_in_bulk(&self, paths: Vec<FileEntry>) -> Vec<FileEntry>{
-        dbg!("Generating hashes for {} files", paths.len());
         let total = paths.len() as u64;
 
         let pb = ProgressBar::new(total);
@@ -64,7 +63,6 @@ impl Hasher {
         );
 
         let counter = Arc::new(AtomicUsize::new(0));
-
         let results: Vec<FileEntry> = paths
             .into_par_iter()
             .map(|mut p| {

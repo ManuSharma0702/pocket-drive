@@ -1,11 +1,11 @@
-use std::{collections::HashMap, env, os::unix::fs::MetadataExt, path::PathBuf, sync::mpsc, time::{Duration, SystemTime}};
+use std::{collections::HashMap, env, path::PathBuf, sync::mpsc, time::{Duration, SystemTime}};
 
 use notify_debouncer_full::DebouncedEvent;
 use sqlite::{Connection, State};
 use walkdir::WalkDir;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
-use crate::file_hasher::hasher::HasherCmd;
+use crate::{file_hasher::hasher::HasherCmd};
 
 #[derive(Debug, Clone)]
 pub struct FileEntry {
@@ -15,16 +15,19 @@ pub struct FileEntry {
     pub modified: SystemTime,
 }
 
+#[derive(Debug)]
 pub enum DbCmd{
     ProcessEvents(Vec<DebouncedEvent>),
     Get(PathBuf, Sender<Option<FileEntry>>),
     Insert(FileEntry),
     BulkInsert(Vec<FileEntry>),
+    BulkDelete(Vec<FileEntry>),
+    BulkUpdate(Vec<FileEntry>),
     Delete(PathBuf),
     Update(FileEntry)
 }
 
-#[derive(Hash, PartialEq, Eq)]
+#[derive(Hash, PartialEq, Eq, Clone, Debug)]
 pub enum ParserCmd {
     Insert,
     Delete,
@@ -189,6 +192,60 @@ impl Db{
                 Ok(None)
             }
 
+            DbCmd::BulkDelete(files) => {
+                let paths: Vec<String> = files
+                    .iter()
+                    .map(|x| x.path.to_string_lossy().to_string())
+                    .collect();
+
+                self.conn.execute("BEGIN TRANSACTION")?;
+
+                if !paths.is_empty() {
+                    let placeholders = std::iter::repeat_n("?", paths.len())
+                        .collect::<Vec<_>>()
+                        .join(",");
+
+                    let sql = format!(
+                        "DELETE FROM filehash WHERE filepath IN ({})",
+                        placeholders
+                    );
+
+                    let mut stmt = self.conn.prepare(&sql)?;
+
+                    // Bind parameters (1-based index!)
+                    for (i, path) in paths.iter().enumerate() {
+                        stmt.bind((i + 1, path.as_str()))?;
+                    }
+
+                    // Execute
+                    stmt.next()?;   // ← THIS runs the statement
+                }
+
+                self.conn.execute("COMMIT")?;
+
+                Ok(None)
+            }
+
+            DbCmd::BulkUpdate(files) => {
+                self.conn.execute("BEGIN TRANSACTION")?;
+                let mut stmt = self.conn.prepare(
+                    "UPDATE filehash
+                     SET filehash = ?, size = ?, modified = ?
+                     WHERE filepath = ?"
+                )?;
+
+                for file in files {
+                    stmt.bind((1, file.hash.unwrap().as_str()))?;
+                    stmt.bind((2, file.size as i64))?;
+                    stmt.bind((3, file.modified.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64))?;
+                    stmt.bind((4, file.path.to_str().unwrap()))?;
+                    stmt.next()?;
+                    stmt.reset()?;
+                }
+                self.conn.execute("COMMIT")?;
+                Ok(None)
+            }
+
             //Walk the entire directory and compare the metadata of file with the metadata in DB;; //3 case: //Diff -> update hash and metadata update the db entry //Missing -> insert //Present, same hash -> ignore //Present in DB, not in directory -> Remove //Get the entire db in memory in Bulk, as a hashMap of <Path, FileEntry> //Create the HashMap of directory files as <Path, FileEntry> //Make comparisons and store in a separate map with <DbCmd, Vec<FileEntry>> //Execute each command over the vector in batch //Send the same command over to the Server for sync
             DbCmd::ProcessEvents(events) => {
                 let mut stmt = self.conn.prepare(
@@ -247,11 +304,14 @@ impl Db{
                 //Not present in DB Present in directory, then should be added
                 //Present in both, but metadata is different then update
                 //Present in both, and metadata same, then make no change
-                let mut parser_cmds: HashMap<ParserCmd, FileEntry> = HashMap::new();
+                let mut parser_cmds: HashMap<ParserCmd, Vec<FileEntry>> = HashMap::new();
 
                 for (path, fi) in &db_map {
                     if !directory_map.contains_key(path) {
-                        parser_cmds.insert(ParserCmd::Delete, fi.clone());
+                        parser_cmds
+                            .entry(ParserCmd::Delete)
+                            .or_default()
+                            .push(fi.clone());
                     }
                 }
 
@@ -260,12 +320,20 @@ impl Db{
                         let file1 = fi;
                         let file2 = db_map.get(&file1.path).unwrap();
                         if !self.is_metadata_same(&file1, file2) {
-                            parser_cmds.insert(ParserCmd::Insert, file1);
+                            parser_cmds
+                                .entry(ParserCmd::Update)
+                                .or_default()
+                                .push(file1);
                         }
                     } else {
-                        parser_cmds.insert(ParserCmd::Insert, fi);
+                        parser_cmds
+                            .entry(ParserCmd::Insert)
+                            .or_default()
+                            .push(fi);
                     }
                 }
+
+                self.execute_parser_cmds(parser_cmds);
 
                 Ok(None)            
             }
@@ -280,19 +348,66 @@ impl Db{
         file1.size == file2.size && t1 == t2
     }
 
-    fn execute_parser_cmds(&self, parser_cmd: HashMap<ParserCmd, FileEntry>) {
-        //Bulk Insert
-        //Bulk Delete
-        //Bulk Update
-        //
-        //Generate hashes of insert and update files
-        let (tx, rx) = mpsc::channel::<HasherCmd>();
+    fn execute_parser_cmds(&self, parser_cmd: HashMap<ParserCmd, Vec<FileEntry>>) {
+        let (tx, rx) = mpsc::channel::<Vec<FileEntry>>();
 
-        //
-        // self.tx_hasher.send(
-        //     HasherCmd::Generate(, )
-        // )
+        let mut files_to_hash: Vec<FileEntry> = Vec::new();
+        let mut command_map: Vec<ParserCmd> = Vec::new(); // command per file, same order
 
+        // Flatten input map
+        for (cmd, files) in parser_cmd {
+            match cmd {
+                ParserCmd::Insert | ParserCmd::Update => {
+                    for file in files {
+                        files_to_hash.push(file);
+                        command_map.push(cmd.clone());
+                    }
+                }
+                ParserCmd::Delete => {
+                    dbg!("DELETING FILES" , &files.len());
+                    self.execute(DbCmd::BulkDelete(files)).unwrap();
+                }
+            }
+        }
+
+        let mut hashes = Vec::new();
+
+        // Send for hashing (single expensive call)
+        if !files_to_hash.is_empty() {
+            self.tx_hasher
+                .send(HasherCmd::Generate(files_to_hash, tx))
+                .unwrap();
+            hashes = rx.recv().unwrap();
+        }
+
+        // Rebuild parser_cmd with owned hashed files
+        let mut parser_cmd: HashMap<ParserCmd, Vec<FileEntry>> = HashMap::new();
+
+        //zip combines two iterators
+        //Since we have appended the commands in the order in which they are pushed
+        //into files_to_hash. Assuming the response from the hasher is in order
+        //The two iterators commands and hasher maintain order
+        for (cmd, file_with_hash) in command_map.into_iter().zip(hashes.into_iter()) {
+            parser_cmd
+                .entry(cmd)
+                .or_default()
+                .push(file_with_hash);
+        }
+
+        // Execute bulk operations
+        for (cmd, files) in parser_cmd {
+            match cmd {
+                ParserCmd::Insert => {
+                    dbg!("INSERTING NEW FILES");
+                    self.execute(DbCmd::BulkInsert(files)).unwrap();
+                }
+                ParserCmd::Update => {
+                    dbg!("UPDATING EXISTING FILES");
+                    self.execute(DbCmd::BulkUpdate(files)).unwrap();
+                }
+                ParserCmd::Delete => {} // already done
+            }
+        }
     }
 
 }
