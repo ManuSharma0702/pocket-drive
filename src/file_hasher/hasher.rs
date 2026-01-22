@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use blake2::{Blake2s256, Digest};
 use file_hashing::get_hash_file;
 
-use crate::db_listener::db::{FileEntry};
+use crate::db_listener::db::FileEntry;
 
 
 pub enum HasherCmd {

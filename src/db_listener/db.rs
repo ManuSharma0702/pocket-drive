@@ -5,7 +5,7 @@ use sqlite::{Connection, State};
 use walkdir::WalkDir;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
-use crate::{file_hasher::hasher::HasherCmd};
+use crate::file_hasher::hasher::HasherCmd;
 
 #[derive(Debug, Clone)]
 pub struct FileEntry {
