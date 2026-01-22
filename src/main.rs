@@ -21,6 +21,11 @@ async fn main() {
 
     tokio::spawn(listener.run());
 
+    //Start a task of file uploader which will be async since after network call there will be
+    //waiting, which will post/delete/put the changes to home server
+    //pass the tx of this to DB, which orchestrates parsing, hashing, and syncing
+    //When receive an event db will first update server then update local hash
+
     std::thread::spawn(move || {
         db.run(&args[1].clone());
     });
