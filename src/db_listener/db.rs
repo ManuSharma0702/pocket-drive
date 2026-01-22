@@ -187,7 +187,6 @@ impl Db{
                 }
 
                 self.conn.execute("COMMIT")?;
-                dbg!("INSERTED SUCCESSFULLY");
 
                 Ok(None)
             }

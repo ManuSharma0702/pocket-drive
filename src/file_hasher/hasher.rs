@@ -14,7 +14,6 @@ pub enum HasherCmd {
     Generate(Vec<FileEntry>, Sender<Vec<FileEntry>>)
 }
 
-//Hasher will contain the tx for DB
 pub struct Hasher{
     tx_hasher: Sender<HasherCmd>,
     rx_hasher: Receiver<HasherCmd>
