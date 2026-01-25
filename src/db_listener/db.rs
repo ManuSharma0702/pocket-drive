@@ -1,13 +1,14 @@
 use std::{collections::HashMap, env, path::PathBuf, sync::mpsc, time::{Duration, SystemTime}};
 
 use notify_debouncer_full::DebouncedEvent;
+use serde::Serialize;
 use sqlite::{Connection, State};
 use walkdir::WalkDir;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
-use crate::file_hasher::hasher::HasherCmd;
+use crate::{file_hasher::hasher::HasherCmd, file_uploader::file_upload::{FileEntryDTO, FileUploaderCmd, Operations}};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone,Serialize)]
 pub struct FileEntry {
     pub path: PathBuf,
     pub hash: Option<String>,
@@ -38,11 +39,12 @@ pub struct Db{
     conn: Connection,
     tx: Sender<DbCmd>,
     rx: Receiver<DbCmd>,
-    tx_hasher: Sender<HasherCmd>
+    tx_hasher: Sender<HasherCmd>,
+    tx_uploader: tokio::sync::mpsc::Sender<FileUploaderCmd>
 }
 
 impl Db{
-    pub fn new(tx_hasher: Sender<HasherCmd>) -> Self {
+    pub fn new(tx_hasher: Sender<HasherCmd>, tx_uploader: tokio::sync::mpsc::Sender<FileUploaderCmd>) -> Self {
         let (tx, rx) = channel();
         let connection = sqlite::open("memory").unwrap();
         let query = "
@@ -53,11 +55,13 @@ impl Db{
             conn: connection,
             tx,
             rx,
-            tx_hasher
+            tx_hasher,
+            tx_uploader
         }
     }
 
     pub fn initialise(&self, directory: &str) {
+        //TODO: Sync with the Host Server
         let walkdir = WalkDir::new(directory);
         let mut paths: Vec<FileEntry> = Vec::new();
 
@@ -332,6 +336,7 @@ impl Db{
                     }
                 }
 
+                dbg!(&parser_cmds);
                 self.execute_parser_cmds(parser_cmds);
 
                 Ok(None)            
@@ -354,7 +359,7 @@ impl Db{
         let mut command_map: Vec<ParserCmd> = Vec::new(); // command per file, same order
 
         // Flatten input map
-        for (cmd, files) in parser_cmd {
+        for (cmd, files) in parser_cmd.clone() {
             match cmd {
                 ParserCmd::Insert | ParserCmd::Update => {
                     for file in files {
@@ -364,6 +369,9 @@ impl Db{
                 }
                 ParserCmd::Delete => {
                     dbg!("DELETING FILES" , &files.len());
+                    for _ in 0..files.len() {
+                        command_map.push(cmd.clone());
+                    }
                     self.execute(DbCmd::BulkDelete(files)).unwrap();
                 }
             }
@@ -379,6 +387,10 @@ impl Db{
             hashes = rx.recv().unwrap();
         }
 
+        if parser_cmd.contains_key(&ParserCmd::Delete) {
+            hashes.extend_from_slice(parser_cmd.get(&ParserCmd::Delete).unwrap());
+        }
+
         // Rebuild parser_cmd with owned hashed files
         let mut parser_cmd: HashMap<ParserCmd, Vec<FileEntry>> = HashMap::new();
 
@@ -392,20 +404,32 @@ impl Db{
                 .or_default()
                 .push(file_with_hash);
         }
+        //Create File Upload payload
+        //
+        let mut payload: HashMap<Operations, Vec<FileEntryDTO>> = HashMap::new();
 
         // Execute bulk operations
         for (cmd, files) in parser_cmd {
             match cmd {
                 ParserCmd::Insert => {
-                    dbg!("INSERTING NEW FILES");
-                    self.execute(DbCmd::BulkInsert(files)).unwrap();
+                    self.execute(DbCmd::BulkInsert(files.clone())).unwrap();
+                    payload.insert(Operations::Insert, files.iter().map(FileEntryDTO::from).collect());
                 }
                 ParserCmd::Update => {
-                    dbg!("UPDATING EXISTING FILES");
-                    self.execute(DbCmd::BulkUpdate(files)).unwrap();
+                    self.execute(DbCmd::BulkUpdate(files.clone())).unwrap();
+                    payload.insert(Operations::Update, files.iter().map(FileEntryDTO::from).collect());
                 }
-                ParserCmd::Delete => {} // already done
+                ParserCmd::Delete => {
+                    payload.insert(Operations::Delete, files.iter().map(FileEntryDTO::from).collect());
+                } // already done
             }
+        }
+
+        if !payload.is_empty() {
+            let (tx, rx) = mpsc::channel();
+            self.tx_uploader.blocking_send(FileUploaderCmd::Sync(payload, tx)).unwrap();
+
+            let _ = rx.recv().unwrap();
         }
     }
 
