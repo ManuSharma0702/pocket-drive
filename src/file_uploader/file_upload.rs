@@ -1,7 +1,9 @@
 use std::{collections::HashMap, sync::mpsc::Sender, time::SystemTime};
-
+use reqwest::multipart::{Form, Part};
 use reqwest::{Client, StatusCode};
 use serde::Serialize;
+use tokio::fs::File;
+use tokio_util::codec::{BytesCodec, FramedRead};
 
 use crate::db_listener::db::FileEntry;
 
@@ -69,20 +71,51 @@ impl FileUploader {
         match cmd {
             FileUploaderCmd::Sync(operations, sender) => {
                 let client = Client::new();
+                let payload = serde_json::to_string(&operations).unwrap();
+                let mut form = Form::new().text("payload", payload);
+
+                for entries in operations.values(){
+                    for dto in entries{
+                        let path = &dto.file_path;
+                        if !std::path::Path::new(path).exists() {
+                            continue;
+                        }
+
+                        let file = File::open(path).await.unwrap();
+
+                        let stream = FramedRead::new(file, BytesCodec::new());
+                        let body = reqwest::Body::wrap_stream(stream);
+
+                        let filename = std::path::Path::new(path)
+                            .file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .to_string();
+
+                        let part = Part::stream(body)
+                            .file_name(filename)
+                            .mime_str("application/octet-stream")
+                            .unwrap();
+
+                        // same name for multiple files
+                        form = form.part("files", part);
+                    }
+                }
 
                 dbg!(&operations);
                 let response = client
                     .post("http://localhost:8000/sync")
-                    .header("Content-Type", "application/json")
-                    .json(&operations)
+                    .multipart(form)
                     .send()
                     .await
                     .unwrap();
+
                 let status = response.status();
                 let body = response.text().await.unwrap();
-                println!("Status: {}", status);
+
                 println!("Body:\n{}", body);
-                sender.send((status, body)).unwrap();
+                println!("Status: {}", status);
+                sender.send((status, body)).unwrap();                
             }
             FileUploaderCmd::Get() => unimplemented!()
         }
