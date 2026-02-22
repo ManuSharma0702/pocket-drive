@@ -27,6 +27,7 @@ pub struct FileUploader{
 
 #[derive(Serialize, Debug)]
 pub struct FileEntryDTO {
+    file_name: String,
     file_path: String,
     file_hash: Option<String>,
     file_size: i64,
@@ -43,6 +44,7 @@ impl From<&FileEntry> for FileEntryDTO {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64,
+            file_name: value.filename.to_string()
         }
     }
 }

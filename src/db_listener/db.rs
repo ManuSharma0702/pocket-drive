@@ -10,6 +10,7 @@ use crate::{file_hasher::hasher::HasherCmd, file_uploader::file_upload::{FileEnt
 
 #[derive(Debug, Clone,Serialize)]
 pub struct FileEntry {
+    pub filename: String,
     pub path: PathBuf,
     pub hash: Option<String>,
     pub size: u64,
@@ -48,7 +49,7 @@ impl Db{
         let (tx, rx) = channel();
         let connection = sqlite::open("memory").unwrap();
         let query = "
-            CREATE TABLE IF NOT EXISTS filehash (filepath TEXT, filehash TEXT, size BIGDECIMAL, modified DATETIME);
+            CREATE TABLE IF NOT EXISTS filehash (filepath TEXT, filehash TEXT, size BIGDECIMAL, modified DATETIME, filename TEXT);
         ";
         connection.execute(query).unwrap();
         Db{
@@ -73,6 +74,7 @@ impl Db{
 
             if metadata.is_file() {
                 let f = FileEntry {
+                    filename: entry.file_name().to_string_lossy().into_owned(),
                     path: entry.into_path(),
                     hash: None,
                     size: metadata.len(),
@@ -116,8 +118,10 @@ impl Db{
                     let hash: String = stmt.read(1)?;
                     let size: i64 = stmt.read(2)?;
                     let modified: i64 = stmt.read(3)?;
+                    let filename: String = stmt.read(4)?;
 
                     sender.send(Some(FileEntry{
+                        filename,
                         path: PathBuf::from(path),
                         hash: Some(hash),
                         size: size as u64,
@@ -129,12 +133,13 @@ impl Db{
             }
             DbCmd::Insert(file) => {
                 let mut stmt = self.conn.prepare(
-                    "Insert INTO filehash VALUES (?,?,?,?)"
+                    "Insert INTO filehash VALUES (?,?,?,?,?)"
                 )?;
                 stmt.bind((1, file.path.to_str()))?;
                 stmt.bind((2, file.hash.unwrap_or("".to_string()).as_str()))?;
                 stmt.bind((3, file.size as i64))?;
                 stmt.bind((4, file.modified.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64))?;
+                stmt.bind((5, file.filename.as_str()))?;
 
                 stmt.next()?;
                 Ok(None)
@@ -151,8 +156,8 @@ impl Db{
             
             DbCmd::Update(file) => {
                 let mut stmt = self.conn.prepare(
-                    "INSERT INTO filehash (filepath, filehash, size, modified)
-                    VALUES (?, ?, ?, ?)
+                    "INSERT INTO filehash (filepath, filehash, size, modified, filename)
+                    VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(filepath) DO UPDATE SET
                          filehash = excluded.filehash,
                          size = excluded.size,
@@ -163,6 +168,7 @@ impl Db{
                 stmt.bind((2, file.hash.unwrap_or("".to_string()).as_str()))?;
                 stmt.bind((3, file.size as i64))?;
                 stmt.bind((4, file.modified.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64))?;
+                stmt.bind((5, file.filename.as_str()))?;
                 stmt.next()?;
 
                 Ok(None)
@@ -171,7 +177,7 @@ impl Db{
             DbCmd::BulkInsert(files) => {
                 self.conn.execute("BEGIN TRANSACTION")?;
                 let mut stmt = self.conn.prepare(
-                    "INSERT OR REPLACE INTO filehash (filepath, filehash, size, modified) VALUES (?, ?, ?, ?)"
+                    "INSERT OR REPLACE INTO filehash (filepath, filehash, size, modified, filename) VALUES (?, ?, ?, ?, ?)"
                 )?;
 
                 for file in files {
@@ -185,6 +191,7 @@ impl Db{
                             .unwrap()
                             .as_secs() as i64,
                     ))?;
+                    stmt.bind((5, file.filename.as_str()))?;
 
                     stmt.next()?;
                     stmt.reset()?;
@@ -233,7 +240,7 @@ impl Db{
                 self.conn.execute("BEGIN TRANSACTION")?;
                 let mut stmt = self.conn.prepare(
                     "UPDATE filehash
-                     SET filehash = ?, size = ?, modified = ?
+                     SET filehash = ?, size = ?, modified = ?, filename = ?
                      WHERE filepath = ?"
                 )?;
 
@@ -241,7 +248,8 @@ impl Db{
                     stmt.bind((1, file.hash.unwrap().as_str()))?;
                     stmt.bind((2, file.size as i64))?;
                     stmt.bind((3, file.modified.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64))?;
-                    stmt.bind((4, file.path.to_str().unwrap()))?;
+                    stmt.bind((4, file.filename.as_str()))?;
+                    stmt.bind((5, file.path.to_str().unwrap()))?;
                     stmt.next()?;
                     stmt.reset()?;
                 }
@@ -262,6 +270,7 @@ impl Db{
                     let hash: String = stmt.read(1)?;
                     let size: i64 = stmt.read(2)?;
                     let modified: i64 = stmt.read(3)?;
+                    let filename: String = stmt.read(4)?;
 
                     let path_buf = PathBuf::from(path);
 
@@ -270,6 +279,7 @@ impl Db{
                         hash: Some(hash),
                         size: size as u64,
                         modified: SystemTime::UNIX_EPOCH + Duration::from_secs(modified as u64),
+                        filename
                     };
 
                     db_map.insert(path_buf, f);
@@ -289,6 +299,7 @@ impl Db{
                         continue;
                     }
 
+                    let filename = entry.file_name().to_string_lossy().into_owned();
                     let path = entry.into_path();
 
                     let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
@@ -298,6 +309,7 @@ impl Db{
                         hash: None,
                         size: metadata.len(),
                         modified,
+                        filename
                     };
 
                     directory_map.insert(path, f);
